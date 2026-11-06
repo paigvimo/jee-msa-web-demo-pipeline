@@ -189,7 +189,7 @@ stages:
 
               echo "=== 4. Seleccionando proyecto ==="
 
-              oc project testing-account-dev
+              oc project pvidalm-dev
 
               echo "=== 5. Aplicando manifiestos ==="
 
