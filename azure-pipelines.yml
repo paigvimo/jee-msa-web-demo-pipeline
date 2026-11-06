@@ -7,6 +7,7 @@ trigger:
       - master
       - develop
 
+# Agente utilizado por defecto en los jobs
 pool:
   vmImage: 'ubuntu-24.04'
 
@@ -18,23 +19,40 @@ stages:
   - stage: CI
     displayName: 'CI'
     jobs:
+
+      # ------------------------------------------
+      # JOB 1: PREVALIDACIÓN
+      # ------------------------------------------
       - job: prevalidation
         displayName: 'Prevalidar'
         steps:
-          - script: echo "Simulación de verificación de la estructura del repositorio realizada correctamente."
+          - script: |
+              echo "Simulación de verificación de la estructura del repositorio."
+              echo "Repositorio: $(Build.Repository.Name)"
+              echo "Rama: $(Build.SourceBranchName)"
+              echo "Prevalidación realizada correctamente."
             displayName: 'Validación inicial'
 
+      # ------------------------------------------
+      # JOB 2: COMPILACIÓN
+      # ------------------------------------------
       - job: build
         displayName: 'Compilar'
         dependsOn: prevalidation
         steps:
+
           # 1. Descargar el JDK 25 usando la API de Adoptium
           - script: |
               echo "Descargando JDK 25..."
-              curl -L -o $(Agent.TempDirectory)/jdk25.tar.gz "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
+
+              curl -L \
+                -o "$(Agent.TempDirectory)/jdk25.tar.gz" \
+                "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
+
+              echo "JDK 25 descargado correctamente."
             displayName: 'Descargar JDK 25'
 
-          # 2. Usar la tarea nativa para instalar java y configurar JAVA_HOME
+          # 2. Instalar Java y configurar JAVA_HOME
           - task: JavaToolInstaller@0
             inputs:
               versionSpec: '25'
@@ -45,23 +63,38 @@ stages:
               cleanDestinationDirectory: true
             displayName: 'Instalar Java 25'
 
-          # 3. Compilar
+          # 3. Mostrar versión de Java
+          - script: |
+              echo "Versión de Java configurada:"
+              java -version
+            displayName: 'Verificar versión de Java'
+
+          # 4. Compilar aplicación
           - script: |
               chmod +x gradlew
               ./gradlew compileJava -x test
             displayName: 'Compilar con Gradle'
 
+      # ------------------------------------------
+      # JOB 3: PRUEBAS Y COBERTURA
+      # ------------------------------------------
       - job: test
         displayName: 'Pruebas y Cobertura'
         dependsOn: build
         steps:
+
           # 1. Descargar el JDK 25 usando la API de Adoptium
           - script: |
               echo "Descargando JDK 25..."
-              curl -L -o $(Agent.TempDirectory)/jdk25.tar.gz "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
+
+              curl -L \
+                -o "$(Agent.TempDirectory)/jdk25.tar.gz" \
+                "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
+
+              echo "JDK 25 descargado correctamente."
             displayName: 'Descargar JDK 25'
 
-          # 2. Usar la tarea nativa para instalar java y configurar JAVA_HOME
+          # 2. Instalar Java y configurar JAVA_HOME
           - task: JavaToolInstaller@0
             inputs:
               versionSpec: '25'
@@ -72,13 +105,19 @@ stages:
               cleanDestinationDirectory: true
             displayName: 'Instalar Java 25'
 
-          # 3. Ejecutar pruebas y cobertura
+          # 3. Mostrar versión de Java
+          - script: |
+              echo "Versión de Java configurada:"
+              java -version
+            displayName: 'Verificar versión de Java'
+
+          # 4. Ejecutar pruebas y generar cobertura
           - script: |
               chmod +x gradlew
               ./gradlew check
             displayName: 'Ejecutar Pruebas y Cobertura'
 
-          # Publica el reporte visual de JaCoCo
+          # 5. Publicar reporte de cobertura de JaCoCo
           - task: PublishCodeCoverageResults@2
             inputs:
               summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/build/reports/jacoco/test/jacocoTestReport.xml'
@@ -86,22 +125,31 @@ stages:
             displayName: 'Publicar Cobertura en Azure DevOps'
 
   # ==========================================
-  # STAGE 2: APROBACIÓN MANUAL (APPROVAL)
+  # STAGE 2: APROBACIÓN MANUAL
   # ==========================================
   - stage: Approval
     displayName: 'Aprobar'
     dependsOn: CI
     condition: succeeded()
     jobs:
+
       - job: manual_gate
         displayName: 'Esperando aprobación'
         pool: server
+
+        # Tiempo máximo durante el que puede permanecer activo el job
+        timeoutInMinutes: 1440
+
         steps:
           - task: ManualValidation@0
+            timeoutInMinutes: 1440
             inputs:
               notifyUsers: 'jefersonvillacis@hotmail.com'
-              instructions: 'Aprobación requerida para ejecutar la fase de despliegue continuo en OpenShift Sandbox.'
+              instructions: |
+                Aprobación requerida para ejecutar la fase de despliegue continuo
+                en OpenShift Sandbox.
               onTimeout: 'reject'
+            displayName: 'Solicitar aprobación manual'
 
   # ==========================================
   # STAGE 3: DESPLIEGUE CONTINUO (CD)
@@ -111,51 +159,128 @@ stages:
     dependsOn: Approval
     condition: succeeded()
     jobs:
+
       - job: deploy_openshift
         displayName: 'Desplegar en OpenShift'
         steps:
+
           - script: |
-              echo "=== 1. Descargando e instalando OpenShift CLI (oc) ==="
-              curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz
+              set -e
+
+              echo "=== 1. Descargando OpenShift CLI ==="
+
+              curl -LO \
+                "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz"
+
+              echo "=== 2. Descomprimiendo OpenShift CLI ==="
+
               tar -xzf openshift-client-linux.tar.gz
               sudo mv oc /usr/local/bin/
 
-              echo "=== 2. Autenticando en el Clúster ==="
-              oc login --token=$(OPENSHIFT_TOKEN) --server=$(OPENSHIFT_SERVER) --insecure-skip-tls-verify=true
+              echo "Versión instalada de OpenShift CLI:"
+              oc version --client
 
-              echo "=== 3. Seleccionando Proyecto ==="
-              oc project pvidalm-dev
+              echo "=== 3. Autenticando en el clúster ==="
 
-              echo "=== 4. Aplicando Manifiestos (Creando BuildConfig y Deployment) ==="
+              oc login \
+                --token="$(OPENSHIFT_TOKEN)" \
+                --server="$(OPENSHIFT_SERVER)" \
+                --insecure-skip-tls-verify=true
+
+              echo "=== 4. Seleccionando proyecto ==="
+
+              oc project testing-account-dev
+
+              echo "=== 5. Aplicando manifiestos ==="
+
               oc apply -f helm/build-config.yaml
               oc apply -f helm/dev.yml
               oc apply -f helm/service.yaml
               oc apply -f helm/route.yaml
 
-              echo "=== 5. Iniciando Build en OpenShift (Dockerfile) ==="
-              oc start-build jee-msa-web-demo-pipeline --follow
+              echo "=== 6. Iniciando build en OpenShift ==="
 
-              echo "=== 6. Reiniciando el despliegue para tomar la nueva imagen ==="
-              oc rollout restart deployment/jee-msa-web-demo-pipeline
+              oc start-build msa-web-demo-pipeline --follow
 
-              echo "=== 7. Esperando a que el Pod esté listo ==="
-              oc rollout status deployment/jee-msa-web-demo-pipeline
+              echo "=== 7. Reiniciando despliegue ==="
 
-              echo "=== 8. Obteniendo URL de la Aplicación ==="
-              oc get route jee-msa-web-demo-pipeline -o jsonpath='{"URL: http://"}{.spec.host}{"\n"}'
-            displayName: 'Descarga CLI, Login y Despliegue Docker'
+              oc rollout restart deployment/msa-web-demo-pipeline
+
+              echo "=== 8. Esperando que el deployment esté disponible ==="
+
+              oc rollout status \
+                deployment/msa-web-demo-pipeline \
+                --timeout=300s
+
+              echo "=== 9. Obteniendo URL de la aplicación ==="
+
+              oc get route msa-web-demo-pipeline \
+                -o jsonpath='URL: http://{.spec.host}{"\n"}'
+            displayName: 'Descargar CLI, autenticar y desplegar'
 
   # ==========================================
-  # STAGE 4: NOTIFICACIONES (NOTIFICATIONS)
+  # STAGE 4: VERIFICACIÓN POST-DESPLIEGUE
+  # ==========================================
+  - stage: PostDeployment
+    displayName: 'Verificar despliegue'
+    dependsOn: CD
+    condition: succeeded()
+    jobs:
+
+      - job: deployment_summary
+        displayName: 'Resumen del despliegue'
+        steps:
+
+          # Este job no necesita descargar el repositorio
+          - checkout: none
+
+          - script: |
+              echo "============================================"
+              echo "DESPLIEGUE COMPLETADO CORRECTAMENTE"
+              echo "============================================"
+              echo "Pipeline: $(Build.DefinitionName)"
+              echo "Número de ejecución: $(Build.BuildNumber)"
+              echo "Build ID: $(Build.BuildId)"
+              echo "Repositorio: $(Build.Repository.Name)"
+              echo "Rama: $(Build.SourceBranchName)"
+              echo "Commit: $(Build.SourceVersion)"
+              echo "Solicitado por: $(Build.RequestedFor)"
+              echo "Agente: $(Agent.Name)"
+              echo "Sistema operativo: $(Agent.OS)"
+              echo "Estado del job: $(Agent.JobStatus)"
+              echo "Fecha UTC: $(date -u)"
+              echo "============================================"
+            displayName: 'Mostrar resumen de ejecución'
+
+  # ==========================================
+  # STAGE 5: NOTIFICACIONES
   # ==========================================
   - stage: Notifications
     displayName: 'Notificar'
-    dependsOn: [CI, Approval, CD]
+    dependsOn:
+      - CI
+      - Approval
+      - CD
+      - PostDeployment
     condition: always()
     jobs:
+
       - job: send_status_email
         displayName: 'Enviar Reporte'
         steps:
+
+          # Este job tampoco necesita descargar el repositorio
+          - checkout: none
+
           - script: |
-              echo "Estado final de la ejecución del pipeline construido por Jeferson Villacís: $(Agent.JobStatus)"
+              echo "============================================"
+              echo "REPORTE FINAL DEL PIPELINE"
+              echo "============================================"
+              echo "Pipeline: $(Build.DefinitionName)"
+              echo "Ejecución: $(Build.BuildNumber)"
+              echo "Rama: $(Build.SourceBranchName)"
+              echo "Estado del job de notificación: $(Agent.JobStatus)"
+              echo "Pipeline construido por Jeferson Villacís."
+              echo "============================================"
+              echo "Simulación de envío de correo electrónico completada."
             displayName: 'Simulación de Envío de Correo Electrónico'
