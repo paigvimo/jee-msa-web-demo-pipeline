@@ -200,21 +200,21 @@ stages:
 
               echo "=== 6. Iniciando build en OpenShift ==="
 
-              oc start-build msa-web-demo-pipeline --follow
+              oc start-build jee-msa-web-demo-pipeline --follow
 
               echo "=== 7. Reiniciando despliegue ==="
 
-              oc rollout restart deployment/msa-web-demo-pipeline
+              oc rollout restart deployment/jee-msa-web-demo-pipeline
 
               echo "=== 8. Esperando que el deployment esté disponible ==="
 
               oc rollout status \
-                deployment/msa-web-demo-pipeline \
+                deployment/jee-msa-web-demo-pipeline \
                 --timeout=300s
 
               echo "=== 9. Obteniendo URL de la aplicación ==="
 
-              oc get route msa-web-demo-pipeline \
+              oc get route jee-msa-web-demo-pipeline \
                 -o jsonpath='URL: http://{.spec.host}{"\n"}'
             displayName: 'Descargar CLI, autenticar y desplegar'
 
